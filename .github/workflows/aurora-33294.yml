@@ -1,0 +1,68 @@
+name: Aurora - Manager 33294
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: aurora-manager-33294
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Download and verify official spoofed Manager 33294
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p manager
+          cd manager
+          apk=KernelSU_Next_v3.4.0-spoofed_33294-release.apk
+          curl --fail --location --retry 5 --output "$apk" "https://github.com/KernelSU-Next/KernelSU-Next/releases/download/v3.4.0/$apk"
+          echo "84558aca2f82367f66534a7776aacb08f71d19fcb4e82d712c689d961f0e602b  $apk" > SHA256SUMS
+          sha256sum -c SHA256SUMS
+      - uses: actions/upload-artifact@v7
+        with:
+          name: Manager-33294-spoofed
+          path: manager/
+          if-no-files-found: error
+      - name: Build matching NoMount metamodule
+        id: nomount
+        uses: ./.github/actions/nomount-metamodule
+        with:
+          commit: 5a610db7649a59eb3e3d710653618d594941f8da
+      - uses: actions/upload-artifact@v7
+        with:
+          name: NoMount-Metamodule
+          path: ${{ steps.nomount.outputs.module_dir }}
+          if-no-files-found: error
+          compression-level: 0
+
+  kernel:
+    needs: prepare
+    uses: ./.github/workflows/aurora-build.yml
+    with:
+      version: android14-6.1
+      android_version: android14
+      kernel_version: '6.1'
+      sublevel: '138'
+      os_patch_level: '2025-06'
+      variant: KernelSU-Next
+      feature_set: SUSFS,NoMount
+      root_flavor: next
+      root_commit: 4c5853188012f63a1a1fedd4a57fda6375fecb38
+      ksu_branch: 1a879d6a866f80b1fa1c1009a2ffa747873cbb5e
+      susfs_commit: 6d4f9a92ac7946d9d2d1904149d764506c9ae7b9
+      nomount_commit: 5a610db7649a59eb3e3d710653618d594941f8da
+      kernel_patches_commit: 41ae18b35d20e0c6ac04116785a4a1089528ae94
+      anykernel3_commit: e1e9dce98430c5c6f231f7094a8c7f4ecaf50948
+      brand_name: ''
+      keep_kmi: true
+      allow_version_mismatch: false
+      use_cache: false
+      page_size: 4k
