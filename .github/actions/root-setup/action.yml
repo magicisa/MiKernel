@@ -7,6 +7,10 @@ inputs:
   commit:
     description: 'Full immutable commit SHA'
     required: true
+  next_susfs_fork:
+    description: 'Use pinned pershoot KernelSU-Next dev-susfs fork; only valid for flavor next'
+    required: false
+    default: 'false'
 
 runs:
   using: composite
@@ -50,6 +54,11 @@ runs:
             exit 2
             ;;
         esac
+
+        if [ "${{ inputs.next_susfs_fork }}" = "true" ]; then
+          test "$flavor" = "next" || { echo "SUSFS fork permitted only for flavor=next" >&2; exit 2; }
+          repo="https://github.com/pershoot/KernelSU-Next.git"
+        fi
 
         if ! [[ "$expected_commit" =~ ^[0-9a-f]{40}$ ]]; then
           echo "Root commit must be a full 40-character SHA." >&2
