@@ -107,6 +107,7 @@ jobs:
           version: android14-6.1
           sublevel: '138'
           os_patch_level: 2025-06
+          aurora_namespace_header_rebase: 'true'
 
       - name: Revert temporary SUSFS patch scaffolding
         uses: ./.github/actions/susfs-revert-patches
