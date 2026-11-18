@@ -1,0 +1,144 @@
+name: Aurora 305 - Vanilla ACK baseline (offline binary comparison only)
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - aurora-305-release-abi-rc
+    paths:
+      - .github/workflows/aurora-305-vanilla-baseline.yml
+
+permissions:
+  contents: read
+
+jobs:
+  baseline:
+    name: Vanilla 6.1.138 android14-11 no root (NOT FOR FLASH)
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Checkout MiKernel
+        uses: actions/checkout@v4
+
+      - name: Free disk space for Android kernel build
+        uses: endersonmenezes/free-disk-space@v4
+        with:
+          remove_android: true
+          remove_dotnet: true
+          remove_haskell: true
+          remove_tool_cache: true
+          remove_swap: true
+          remove_packages: "azure-cli google-cloud-cli microsoft-edge-stable google-chrome-stable firefox postgresql* temurin-* *llvm* mysql* dotnet-sdk-*"
+          remove_packages_one_command: true
+          remove_folders: "/usr/share/swift /usr/share/miniconda /usr/share/az* /usr/local/lib/node_modules /usr/local/share/chromium /usr/local/share/powershell /usr/local/julia /usr/local/aws-cli /usr/local/aws-sam-cli /usr/share/gradle"
+          rm_cmd: rmz
+          rmz_version: "3.2.0"
+          testing: false
+
+      - name: Build dependencies
+        uses: ./.github/actions/setup-build-environment
+        with:
+          version: android14-6.1
+          sublevel: '138'
+          kernel_patches_commit: 41ae18b35d20e0c6ac04116785a4a1089528ae94
+          anykernel3_commit: e1e9dce98430c5c6f231f7094a8c7f4ecaf50948
+
+      - name: Download android14-6.1 2025-06 kernel tree and toolchain
+        uses: ./.github/actions/download-kernel
+        with:
+          version: android14-6.1
+          android_version: android14
+          kernel_version: '6.1'
+          os_patch_level: 2025-06
+
+      - name: Pin exact stock source commit; reject modified baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha=0c3d559bcd85c64dae9c9c9687abbe5347fff3ad
+          git -C kernel/common fetch --depth=1 https://android.googlesource.com/kernel/common "$sha"
+          git -C kernel/common checkout --detach FETCH_HEAD
+          test "$(git -C kernel/common rev-parse HEAD)" = "$sha"
+          test "$(sed -n 's/^SUBLEVEL = //p' kernel/common/Makefile | head -1)" = 138
+          echo "STOCK_KERNEL_SOURCE=$sha" >> "$GITHUB_ENV"
+          test ! -d kernel/KernelSU-Next
+          test ! -e kernel/common/drivers/kernelsu
+          test ! -e kernel/common/fs/nomount
+          test ! -e kernel/common/fs/susfs.c
+
+      - name: Match known stock config flags (NO KernelSU/SUSFS/NoMount)
+        uses: ./.github/actions/set-kernel-config
+        with:
+          config_list: |
+            CONFIG_FRAME_WARN=2048
+            CONFIG_KPROBES=y
+            CONFIG_ARM64_4K_PAGES=y
+            CONFIG_MODULES=y
+            CONFIG_MODULE_UNLOAD=y
+            CONFIG_SMP=y
+            CONFIG_PREEMPT=y
+            CONFIG_MODVERSIONS=y
+            CONFIG_MODULE_SIG=y
+            CONFIG_MODULE_SIG_PROTECT=y
+            CONFIG_MODULE_SIG_ALL=y
+            CONFIG_MODULE_SIG_SHA1=y
+            CONFIG_TRIM_UNUSED_KSYMS=y
+            CONFIG_CFI_CLANG=y
+            CONFIG_SHADOW_CALL_STACK=y
+            CONFIG_KASAN=y
+            CONFIG_KASAN_HW_TAGS=y
+            CONFIG_LTO_NONE=y
+            CONFIG_DEBUG_INFO_BTF=y
+            CONFIG_DEBUG_INFO_BTF_MODULES=y
+            CONFIG_ANDROID_VENDOR_HOOKS=y
+            CONFIG_ANDROID_KABI_RESERVE=y
+            CONFIG_KALLSYMS=y
+            CONFIG_KALLSYMS_ALL=y
+
+      - name: Build unmodified ACK kernel Image
+        uses: ./.github/actions/build-kernel
+        with:
+          version: android14-6.1
+          page_size: 4k
+          release_mode: 'true'
+          lto_mode: 'none'
+
+      - name: Verify vanilla config; export artifact for OFFLINE comparison only
+        shell: bash
+        run: |
+          set -euo pipefail
+          image=AnyKernel3/Image
+          test -s "$image"
+          config=""
+          for f in /home/runner/out/.config kernel/bazel-bin/common/kernel_aarch64_config/out_dir/.config; do
+            if [ -f "$f" ]; then config="$f"; break; fi
+          done
+          test -n "$config"
+          grep -qx CONFIG_ARM64_4K_PAGES=y "$config"
+          grep -qx CONFIG_LTO_NONE=y "$config"
+          grep -qx CONFIG_CFI_CLANG=y "$config"
+          grep -qx CONFIG_FRAME_WARN=2048 "$config"
+          if grep -Eq '^CONFIG_(KSU|KSU_SUSFS|NOMOUNT)=y$' "$config"; then
+            echo "Unexpected root/NoMount in vanilla baseline" >&2
+            exit 1
+          fi
+          grep -a -qm1 'Linux version 6.1.138-android14-11' "$image"
+          cp "$config" AnyKernel3/GKI-CONFIG.txt
+          symvers=$(find -L kernel/bazel-bin/common -type f -name Module.symvers -print -quit 2>/dev/null || true)
+          test -n "$symvers"
+          cp "$symvers" AnyKernel3/Module.symvers
+          sha256sum "$image" > AnyKernel3/IMAGE-SHA256.txt
+          printf '%s\n' "DIAGNOSTIC ONLY - DO NOT FLASH" "No KSU, no SUSFS, no NoMount" "Source: $STOCK_KERNEL_SOURCE" "Kleaf: --config=release --lto=none" "Purpose: compare offline to Xiaomi OS3.0.305.0.WNAMIXM stock Image (SHA256 97b2c53022e8c0bd0b279c4c592a196126a6eb0a93647c2957b39dcd5f2dc1c9)" > AnyKernel3/BUILD-INFO.txt
+
+      - name: Upload vanilla binary for desktop diff - not for flashing
+        uses: actions/upload-artifact@v4
+        with:
+          name: AURORA-305-VANILLA-ACK-BASELINE-DO-NOT-FLASH
+          path: |
+            AnyKernel3/Image
+            AnyKernel3/GKI-CONFIG.txt
+            AnyKernel3/Module.symvers
+            AnyKernel3/IMAGE-SHA256.txt
+            AnyKernel3/BUILD-INFO.txt
+          if-no-files-found: error
+          retention-days: 14
