@@ -43,3 +43,7 @@ Save the output. Compare the full `uname -r` (KMI family AND Linux sublevel), pa
 - KernelSU Next v3.4.2: https://github.com/KernelSU-Next/KernelSU-Next/releases/tag/v3.4.2
 - WildKernels build guide: https://github.com/WildKernels/GKI_KernelSU_SUSFS/blob/main/docs/build-from-fork.md
 - WildKernels installation and KMI matching: https://github.com/WildKernels/GKI_KernelSU_SUSFS/blob/main/docs/installation.md
+
+## LKM to built-in GKI transition
+
+The phone is currently rooted with KernelSU Next. Before a built-in GKI boot test, establish whether its current installation is LKM in a patched `init_boot` (or other ramdisk), and plan to restore the matching **stock** image for that partition. Do not leave an LKM boot hook in place alongside the built-in KernelSU Next driver; back up the known-good patched image first and keep a reversible recovery path. The built-in GKI kernel is installed in `boot`, whereas LKM generally patches the ramdisk (`init_boot` on devices using that partition). Consult https://github.com/KernelSU-Next/KernelSU-Next/issues/1227 before migration.
