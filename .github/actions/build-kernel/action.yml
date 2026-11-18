@@ -8,6 +8,10 @@ inputs:
     description: 'ARM64 page size: 4k (default, unchanged behaviour) or 16k'
     required: false
     default: '4k'
+  release_mode:
+    description: 'Use Kleaf --config=release instead of --config=fast (default false)'
+    required: false
+    default: 'false'
   allow_version_mismatch:
     description: 'Whether to force-load version-mismatched modules'
     required: false
@@ -79,8 +83,11 @@ runs:
           if [ "$PAGE_SIZE" = "16k" ]; then
             PAGE_SIZE_FLAGS+=(--page_size=16k)
           fi
+          BUILD_PROFILE=fast
+          if [ "${{ inputs.release_mode }}" = "true" ]; then BUILD_PROFILE=release; fi
+          echo "Building with Kleaf --config=${BUILD_PROFILE}"
           tools/bazel build \
-            --config=fast \
+            --config="${BUILD_PROFILE}" \
             "${PAGE_SIZE_FLAGS[@]}" \
             --disk_cache=/home/runner/.cache/bazel \
             //common:kernel_aarch64/Image
