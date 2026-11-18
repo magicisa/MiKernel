@@ -84,18 +84,19 @@ jobs:
           grep -q 'KERNEL_SU_UAPI_VERSION = 6;' kernel/KernelSU-Next/uapi/supercall.h
           grep -q '^config KSU_SUSFS$' kernel/KernelSU-Next/kernel/Kconfig
 
-      - name: Checkout pinned SUSFS patchset
+      - name: Resolve SUSFS gki-android14-6.1-dev branch and record immutable SHA
         shell: bash
         run: |
           set -euo pipefail
-          expected=6d4f9a92ac7946d9d2d1904149d764506c9ae7b9
           git init susfs4ksu
           git -C susfs4ksu remote add origin https://gitlab.com/pershoot/susfs4ksu.git
-          git -C susfs4ksu fetch --depth=1 origin "$expected"
+          git -C susfs4ksu fetch --depth=1 origin refs/heads/gki-android14-6.1-dev
           git -C susfs4ksu checkout --detach FETCH_HEAD
-          test "$(git -C susfs4ksu rev-parse HEAD)" = "$expected"
+          actual="$(git -C susfs4ksu rev-parse HEAD)"
+          test -n "$actual"
           test -s susfs4ksu/kernel_patches/50_add_susfs_in_gki-android14-6.1.patch
-          echo "SUSFS_COMMIT=$expected" >> "$GITHUB_ENV"
+          echo "SUSFS_COMMIT=$actual" >> "$GITHUB_ENV"
+          echo "Resolved SUSFS branch at $actual" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Enable SUSFS kernel configuration
         uses: ./.github/actions/susfs-config
