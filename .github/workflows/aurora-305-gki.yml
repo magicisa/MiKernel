@@ -150,8 +150,8 @@ jobs:
             echo "- Base source: $KERNEL_SOURCE_COMMIT"
             echo "- KernelSU Next source: 4c706b5938665866ebe16944a481a7b91e3396af (v3.4.2)"
             echo "- SUSFS/NoMount: NOT INCLUDED in this compatibility baseline"
-            echo "- Build success does NOT prove boot compatibility; previous test bootlooped
-            echo "- Stock requires module ABI/CRC; compare against vendor modules before any new test""
+            echo "- Build success does NOT prove boot compatibility; previous test bootlooped"
+            echo "- Stock requires module ABI/CRC; compare against vendor modules before any new test"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload experimental artifact for review only
