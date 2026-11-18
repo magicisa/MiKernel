@@ -8,6 +8,10 @@ inputs:
     description: 'ARM64 page size: 4k (default, unchanged behaviour) or 16k'
     required: false
     default: '4k'
+  lto_mode:
+    description: 'Kleaf --lto override (default, none, thin, full); used only by Kleaf'
+    required: false
+    default: 'default'
   release_mode:
     description: 'Use Kleaf --config=release instead of --config=fast (default false)'
     required: false
@@ -85,9 +89,15 @@ runs:
           fi
           BUILD_PROFILE=fast
           if [ "${{ inputs.release_mode }}" = "true" ]; then BUILD_PROFILE=release; fi
-          echo "Building with Kleaf --config=${BUILD_PROFILE}"
+          LTO_FLAGS=()
+          if [ "${{ inputs.lto_mode }}" != "default" ]; then
+            case "${{ inputs.lto_mode }}" in none|thin|full) ;; *) echo "Invalid lto_mode" >&2; exit 2 ;; esac
+            LTO_FLAGS+=("--lto=${{ inputs.lto_mode }}")
+          fi
+          echo "Building with Kleaf --config=${BUILD_PROFILE} ${LTO_FLAGS[*]}"
           tools/bazel build \
             --config="${BUILD_PROFILE}" \
+            "${LTO_FLAGS[@]}" \
             "${PAGE_SIZE_FLAGS[@]}" \
             --disk_cache=/home/runner/.cache/bazel \
             //common:kernel_aarch64/Image
