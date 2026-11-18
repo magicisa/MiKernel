@@ -99,6 +99,15 @@ jobs:
             CONFIG_MODULE_SIG_ALL=y
             CONFIG_MODULE_SIG_SHA1=y
             CONFIG_TRIM_UNUSED_KSYMS=y
+            CONFIG_CFI_CLANG=y
+            CONFIG_SHADOW_CALL_STACK=y
+            CONFIG_KASAN=y
+            CONFIG_KASAN_HW_TAGS=y
+            CONFIG_LTO_NONE=y
+            CONFIG_DEBUG_INFO_BTF=y
+            CONFIG_DEBUG_INFO_BTF_MODULES=y
+            CONFIG_ANDROID_VENDOR_HOOKS=y
+            CONFIG_ANDROID_KABI_RESERVE=y
 
       - name: Build kernel Image
         uses: ./.github/actions/build-kernel
@@ -106,6 +115,7 @@ jobs:
           version: android14-6.1
           page_size: 4k
           release_mode: 'true'
+          lto_mode: 'none'
 
       - name: Fail closed unless output has exact KMI and built-in root
         shell: bash
@@ -133,12 +143,21 @@ jobs:
             CONFIG_MODULE_SIG_PROTECT=y \
             CONFIG_MODULE_SIG_ALL=y \
             CONFIG_MODULE_SIG_SHA1=y \
-            CONFIG_TRIM_UNUSED_KSYMS=y; do
+            CONFIG_TRIM_UNUSED_KSYMS=y \
+            CONFIG_CFI_CLANG=y \
+            CONFIG_SHADOW_CALL_STACK=y \
+            CONFIG_KASAN=y \
+            CONFIG_KASAN_HW_TAGS=y \
+            CONFIG_LTO_NONE=y \
+            CONFIG_DEBUG_INFO_BTF=y \
+            CONFIG_DEBUG_INFO_BTF_MODULES=y \
+            CONFIG_ANDROID_VENDOR_HOOKS=y \
+            CONFIG_ANDROID_KABI_RESERVE=y; do
             grep -qx "$required" "$config" || { echo "Required stock kernel option absent: $required" >&2; exit 1; }
           done
           grep -qx '# CONFIG_MODULE_SIG_FORCE is not set' "$config" || { echo "Stock uses non-forced module signatures" >&2; exit 1; }
           cp "$config" AnyKernel3/GKI-CONFIG.txt
-          printf '%s\n' "Kleaf profile: release" "Kernel source: $KERNEL_SOURCE_COMMIT" "KernelSU Next: $ROOT_COMMIT" "Target stock: OS3.0.305.0.WNAMIXM" "ABI compatibility with Xiaomi vendor .ko: NOT YET TESTED" > AnyKernel3/BUILD-INFO.txt
+          printf '%s\n' "Kleaf profile: release, --lto=none (stock CONFIG_LTO_NONE=y)" "Kernel source: $KERNEL_SOURCE_COMMIT" "KernelSU Next: $ROOT_COMMIT" "Target stock: OS3.0.305.0.WNAMIXM" "ABI compatibility with Xiaomi vendor .ko: NOT YET TESTED" > AnyKernel3/BUILD-INFO.txt
           symvers=$(find -L kernel/bazel-bin/common -type f -name Module.symvers -print -quit 2>/dev/null || true)
           if [ -n "$symvers" ]; then cp "$symvers" AnyKernel3/Module.symvers; fi
           sha256sum "$image" | tee AnyKernel3/IMAGE-SHA256.txt
