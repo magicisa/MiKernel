@@ -1,57 +1,45 @@
-# Xiaomi 14 Ultra (aurora) — OS3.0.305.0.WNAMIXM GKI build
+# MiKernel: Xiaomi 14 Ultra (aurora), HyperOS OS3.0.305.0.WNAMIXM
 
-**Status: EXACT BASE IDENTIFIED; experimental CI workflow authored but not run; NOT validated for flashing.**
+## Status
+**Full-feature GKI build candidate (not yet boot-validated).** The first minimal GKI temporarily bootlooped, but the handset was recovered by restoring its known-good `init_boot_a` image. It is now functioning on the original kernel and KernelSU Next LKM. Do **not** flash the first GKI image permanently.
 
-This branch is isolated from the previously tested `Aurora - Manager 33294` build on `main`. The earlier workflow pins Linux `6.1.138-android14-2025-06`, KernelSU Next v3.4.0, SUSFS and NoMount. Those pins MUST NOT be assumed compatible with the freshly installed HyperOS `OS3.0.305.0.WNAMIXM`.
+## Device and build target
+- Device: Xiaomi 14 Ultra Global, codename `aurora`, firmware `OS3.0.305.0.WNAMIXM`.
+- Stock kernel: `6.1.138-android14-11-g0c3d559bcd85-ab14529422` (ACK `0c3d559bcd85c64dae9c9c9687abbe5347fff3ad`).
+- ARM64, 4K pages, active slot `_a` at time of recovery.
+- GKI: Android 14 / Linux 6.1.138 / KMI generation 11; Kleaf `--config=release --lto=none`.
+- KernelSU Next built-in from `pershoot/KernelSU-Next` pinned `39b15dead6fa806cb3582f866b081fa1d9e1c9e4`, with `CONFIG_KSU_SUSFS=y`.
+- SUSFS kernel patches from `pershoot/susfs4ksu` pinned `6d4f9a92ac7946d9d2d1904149d764506c9ae7b9`, variant `android14-6.1`.
+- NoMount VFS from `maxsteeel/nomount` pinned `48e4b79a357d77f787b0db8167dbb1f5570ded17`, `CONFIG_NOMOUNT=y`.
+- Keep `CONFIG_MODVERSIONS=y`, other stock module ABI/config options; upload `Module.symvers` for local vendor CRC comparison.
 
-## Target
+## KernelSU Next Manager compatibility
+- Official KernelSU Next v3.4.2 has kernel UAPI **5**.
+- This pinned SUSFS fork has kernel UAPI **6**.
+- **Do not deploy the UAPI 6 build without a matching UAPI 6 Manager and userspace.** A successful kernel build does not solve this requirement.
 
-- Device: Xiaomi 14 Ultra (`aurora`), Global firmware `OS3.0.305.0.WNAMIXM` (verified via ADB).
-- Stock kernel: `6.1.138-android14-11-g0c3d559bcd85-ab14529422` (AOSP source `0c3d559bcd85c64dae9c9c9687abbe5347fff3ad`, June 2025 GKI branch release r15).
-- Active slot: `_a`; page size: 4096; Android/vendor SPL: `2026-08-01`.
-- Initial experimental output: GKI ARM64 `Image` **only** (not boot/flashable zip); KernelSU Next v3.4.2 **built-in (GKI mode)**. SUSFS and NoMount postponed until upstream-compatible patches are verified; the official v3.4.2 Kconfig does not contain legacy CONFIG_KSU_SUSFS.
-- Preserve stock `boot.img` from the **same** firmware, current known-working boot/init_boot copies, unlocked bootloader, and recovery path.
-- Do not build an `android16-6.12` image solely because Android userspace is 16. Determine the GKI/KMI generation from the phone's current stock kernel.
-- Do not run `aurora-33294.yml` as an OS3.0.305.0 build. It is hard-coded for the previous target.
+## Build
+- PR: https://github.com/magicisa/MiKernel/pull/2
+- Workflow: `.github/workflows/aurora-305-gki.yml` on `aurora-305-release-abi-rc`.
+- Manual workflow on `main` is not the correct trigger before merge; use PR/push checks.
+- An artifact can include kernel `Image`, `IMAGE-SHA256.txt`, `GKI-CONFIG.txt`, `BUILD-INFO.txt`, and optional `Module.symvers`. The GitHub Actions ZIP is **not** a flashable `boot.img`.
 
-## Phone pre-flight (run in PowerShell with USB debugging)
+## ABI evidence (previous no-SUSFS candidate only)
+The previous release-profile baseline succeeded with matching CRCs for 417/417 symbols shared between `vmlinux` and Xiaomi's `qca_cld3_kiwi_v2.ko` Wi-Fi module. 139 module CRC entries were not matched to `vmlinux` and may be provided by other vendor modules. This was **not** a successful boot test. The full SUSFS/NoMount image must be compared separately using `tools/check_vendor_module_crc.py`; the earlier result cannot be inherited.
 
-```powershell
-adb devices -l
-adb shell getprop ro.product.device
-adb shell getprop ro.build.version.incremental
-adb shell uname -r
-adb shell uname -a
-adb shell getconf PAGE_SIZE
-adb shell getprop ro.boot.slot_suffix
-adb shell getprop ro.build.version.security_patch
-adb shell getprop ro.vendor.build.security_patch
-adb shell su -c id
-```
+## Recovery (keep local only, no proprietary binaries in GitHub)
+- Verified current/working boot: `C:\ROM\aurora305-backup\boot_a_current.img`.
+- Verified working KernelSU LKM init_boot: `C:\ROM\aurora305-backup\init_boot_a_current.img`.
+- Stock init_boot from same official firmware: `C:\ROM\aurora_global_images_OS3.0.305.0.WNAMIXM_16.0\images\init_boot.img`.
+- Active slot must be checked immediately before any flash: `fastboot getvar current-slot`.
+- Previously `fastboot boot` worked and did not overwrite `boot_a`; this is **not** a guarantee the custom kernel will boot.
+- A rollback after the failed temporary boot succeeded using `fastboot flash init_boot_a <working-patched-init_boot.img>`.
+- Never relock the bootloader or wipe data for a kernel experiment. Do not flash `Image` as `boot.img`.
+- To migrate LKM -> built-in GKI, `init_boot_a` must be restored to the matching original stock image after confirming the current slot; restore the backed-up patched `init_boot_a` if reverting to stock kernel + LKM.
 
-Save the output. Compare the full `uname -r` (KMI family AND Linux sublevel), page size and stock boot image with the available GKI source branch/patch level. Android OS security patch is **not** an interchangeable substitute for the GKI branch patch level.
-
-## Work after pre-flight
-
-1. Select the matching GKI source revision (matching KMI and kernel sublevel/security requirements).
-2. Pin and verify the KernelSU Next integration commit (target manager v3.4.2), separately verify SUSFS patch integration and NoMount against that revision.
-3. Create a separate purpose-built workflow with fail-closed guards; **do not** silently modify the older tested workflow.
-4. Compile once, examine full CI logs, resulting `Image` metadata and patch rejects; record SHA-256 and source revisions.
-5. Test reversible boot from the device's currently active slot only where the bootloader supports `fastboot boot`. Do not flash both slots or relock the bootloader.
-6. Only after a successful boot and functionality test, consider persistent flashing and verify root mode.
-
-## References
-
-- KernelSU Next v3.4.2: https://github.com/KernelSU-Next/KernelSU-Next/releases/tag/v3.4.2
-- WildKernels build guide: https://github.com/WildKernels/GKI_KernelSU_SUSFS/blob/main/docs/build-from-fork.md
-- WildKernels installation and KMI matching: https://github.com/WildKernels/GKI_KernelSU_SUSFS/blob/main/docs/installation.md
-
-## LKM to built-in GKI transition
-
-The phone is currently rooted with KernelSU Next. Before a built-in GKI boot test, establish whether its current installation is LKM in a patched `init_boot` (or other ramdisk), and plan to restore the matching **stock** image for that partition. Do not leave an LKM boot hook in place alongside the built-in KernelSU Next driver; back up the known-good patched image first and keep a reversible recovery path. The built-in GKI kernel is installed in `boot`, whereas LKM generally patches the ramdisk (`init_boot` on devices using that partition). Consult https://github.com/KernelSU-Next/KernelSU-Next/issues/1227 before migration.
-
-## New experimental workflow
-
-`.github/workflows/aurora-305-gki.yml`: **manual only**. Pins upstream AOSP common to `0c3d559bcd85c64dae9c9c9687abbe5347fff3ad` and KernelSU Next official v3.4.2 to `4c706b5938665866ebe16944a481a7b91e3396af` (UAPI 5). Fails before packaging if KMI generation is not 11, if output is not 6.1.138-android14-11, or if built-in CONFIG_KSU / 4K cannot be verified. Does not flash or alter the phone. The workflow is **not yet run**, and a passing CI run alone cannot establish device boot compatibility. Only releases `Image` for expert inspection, not an installable flash zip.
-
-As of the collected ADB output, `adb shell su -c id` returns `su: inaccessible or not found`. This may indicate the Shell app profile lacks permission or KernelSU Next is not actually active. Confirm the Manager's Home status before any GKI migration. Preserve patched and stock init_boot/boot for the same firmware before modifying either partition.
+## Readiness criteria
+- GitHub build successful with no patch rejects, all three features built in.
+- Compare `Module.symvers` CRCs to Xiaomi vendor modules.
+- Kernel and Manager UAPI/userspace matched.
+- Kernel packaged into proper Android v4 boot image with AVB reviewed.
+- Decide controlled installation and rollback. **Compilation success alone never proves device boot compatibility.**
