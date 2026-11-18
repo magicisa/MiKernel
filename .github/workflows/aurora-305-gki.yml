@@ -1,4 +1,4 @@
-name: Aurora 305 - GKI KernelSU Next v3.4.2 (experimental)
+name: Aurora 305 - GKI KernelSU Next v3.4.2 (ABI release candidate)
 
 on:
   workflow_dispatch:
@@ -8,7 +8,7 @@ permissions:
 
 jobs:
   build:
-    name: 6.1.138 android14-11 4K - built-in KSUN v3.4.2
+    name: 6.1.138 android14-11 4K - release config + ABI guards
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
@@ -91,12 +91,21 @@ jobs:
             CONFIG_TMPFS_XATTR=y
             CONFIG_TMPFS_POSIX_ACL=y
             CONFIG_ARM64_4K_PAGES=y
+            CONFIG_MODULES=y
+            CONFIG_MODULE_UNLOAD=y
+            CONFIG_MODVERSIONS=y
+            CONFIG_MODULE_SIG=y
+            CONFIG_MODULE_SIG_PROTECT=y
+            CONFIG_MODULE_SIG_ALL=y
+            CONFIG_MODULE_SIG_SHA1=y
+            CONFIG_TRIM_UNUSED_KSYMS=y
 
       - name: Build kernel Image
         uses: ./.github/actions/build-kernel
         with:
           version: android14-6.1
           page_size: 4k
+          release_mode: 'true'
 
       - name: Fail closed unless output has exact KMI and built-in root
         shell: bash
@@ -114,6 +123,24 @@ jobs:
           grep -qx CONFIG_KSU=y "$config"
           grep -qx CONFIG_KPROBES=y "$config"
           grep -qx CONFIG_ARM64_4K_PAGES=y "$config"
+          # Device stock /proc/config.gz reports these module ABI/security options.
+          # Reject a release candidate that diverges; flags alone do not prove ABI compatibility.
+          for required in \
+            CONFIG_MODULES=y \
+            CONFIG_MODULE_UNLOAD=y \
+            CONFIG_MODVERSIONS=y \
+            CONFIG_MODULE_SIG=y \
+            CONFIG_MODULE_SIG_PROTECT=y \
+            CONFIG_MODULE_SIG_ALL=y \
+            CONFIG_MODULE_SIG_SHA1=y \
+            CONFIG_TRIM_UNUSED_KSYMS=y; do
+            grep -qx "$required" "$config" || { echo "Required stock kernel option absent: $required" >&2; exit 1; }
+          done
+          grep -qx '# CONFIG_MODULE_SIG_FORCE is not set' "$config" || { echo "Stock uses non-forced module signatures" >&2; exit 1; }
+          cp "$config" AnyKernel3/GKI-CONFIG.txt
+          printf '%s\n' "Kleaf profile: release" "Kernel source: $KERNEL_SOURCE_COMMIT" "KernelSU Next: $ROOT_COMMIT" "Target stock: OS3.0.305.0.WNAMIXM" "ABI compatibility with Xiaomi vendor .ko: NOT YET TESTED" > AnyKernel3/BUILD-INFO.txt
+          symvers=$(find -L kernel/bazel-bin/common -type f -name Module.symvers -print -quit 2>/dev/null || true)
+          if [ -n "$symvers" ]; then cp "$symvers" AnyKernel3/Module.symvers; fi
           sha256sum "$image" | tee AnyKernel3/IMAGE-SHA256.txt
           {
             echo "## Aurora OS3.0.305.0 experimental GKI"
@@ -123,15 +150,19 @@ jobs:
             echo "- Base source: $KERNEL_SOURCE_COMMIT"
             echo "- KernelSU Next source: 4c706b5938665866ebe16944a481a7b91e3396af (v3.4.2)"
             echo "- SUSFS/NoMount: NOT INCLUDED in this compatibility baseline"
-            echo "- Build success does NOT prove boot compatibility; DO NOT FLASH without review"
+            echo "- Build success does NOT prove boot compatibility; previous test bootlooped
+            echo "- Stock requires module ABI/CRC; compare against vendor modules before any new test""
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload experimental artifact for review only
         uses: actions/upload-artifact@v4
         with:
-          name: AURORA-305-GKI-6.1.138-KSUNext-3.4.2-REVIEW-ONLY
+          name: AURORA-305-KSUNext-3.4.2-ABI-RELEASE-CANDIDATE-NOT-FLASHABLE
           path: |
             AnyKernel3/Image
             AnyKernel3/IMAGE-SHA256.txt
+            AnyKernel3/GKI-CONFIG.txt
+            AnyKernel3/BUILD-INFO.txt
+            AnyKernel3/Module.symvers
           if-no-files-found: error
           retention-days: 14
