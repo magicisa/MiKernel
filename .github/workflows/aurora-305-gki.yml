@@ -93,6 +93,8 @@ jobs:
             CONFIG_ARM64_4K_PAGES=y
             CONFIG_MODULES=y
             CONFIG_MODULE_UNLOAD=y
+            CONFIG_SMP=y
+            CONFIG_PREEMPT=y
             CONFIG_MODVERSIONS=y
             CONFIG_MODULE_SIG=y
             CONFIG_MODULE_SIG_PROTECT=y
@@ -138,6 +140,8 @@ jobs:
           for required in \
             CONFIG_MODULES=y \
             CONFIG_MODULE_UNLOAD=y \
+            CONFIG_SMP=y \
+            CONFIG_PREEMPT=y \
             CONFIG_MODVERSIONS=y \
             CONFIG_MODULE_SIG=y \
             CONFIG_MODULE_SIG_PROTECT=y \
