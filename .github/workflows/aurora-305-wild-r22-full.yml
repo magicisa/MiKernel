@@ -1,0 +1,254 @@
+name: Aurora 305 - WildKernels r22 Kleaf FULL KSU Next SUSFS NoMount
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - aurora-305-wild-r22-full
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: 6.1.138 android14-11 4K - KSU Next SUSFS NoMount with ABI checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Checkout MiKernel
+        uses: actions/checkout@v4
+
+      - name: Free disk space for Android kernel build
+        uses: endersonmenezes/free-disk-space@v4
+        with:
+          remove_android: true
+          remove_dotnet: true
+          remove_haskell: true
+          remove_tool_cache: true
+          remove_swap: true
+          remove_packages: "azure-cli google-cloud-cli microsoft-edge-stable google-chrome-stable firefox postgresql* temurin-* *llvm* mysql* dotnet-sdk-*"
+          remove_packages_one_command: true
+          remove_folders: "/usr/share/swift /usr/share/miniconda /usr/share/az* /usr/local/lib/node_modules /usr/local/share/chromium /usr/local/share/powershell /usr/local/julia /usr/local/aws-cli /usr/local/aws-sam-cli /usr/share/gradle"
+          rm_cmd: rmz
+          rmz_version: "3.2.0"
+          testing: false
+
+      - name: Build dependencies and pinned packaging
+        uses: ./.github/actions/setup-build-environment
+        with:
+          version: android14-6.1
+          sublevel: '138'
+          kernel_patches_commit: 41ae18b35d20e0c6ac04116785a4a1089528ae94
+          anykernel3_commit: e1e9dce98430c5c6f231f7094a8c7f4ecaf50948
+
+      - name: Download android14-6.1 2025-06 kernel tree and toolchain
+        uses: ./.github/actions/download-kernel
+        with:
+          version: android14-6.1
+          android_version: android14
+          kernel_version: '6.1'
+          os_patch_level: 2025-06
+
+      - name: Select WildKernels r22 GKI 2025-06 source with strict Aurora ABI check
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Uses source synced by download-kernel, exactly as WildKernels r22.
+          # Do not silently switch to a newer Linux sublevel/KMI than the phone.
+          git -C kernel/common rev-parse --verify HEAD
+          actual="$(git -C kernel/common rev-parse HEAD)"
+          test "$(sed -n 's/^VERSION = //p' kernel/common/Makefile | head -1)" = 6
+          test "$(sed -n 's/^PATCHLEVEL = //p' kernel/common/Makefile | head -1)" = 1
+          test "$(sed -n 's/^SUBLEVEL = //p' kernel/common/Makefile | head -1)" = 138 || { echo "Wrong Linux sublevel: expected 6.1.138" >&2; exit 1; }
+          kmi=$(sed -nE 's/^[[:space:]]*KMI_GENERATION[[:space:]]*=[[:space:]]*([0-9]+).*/\1/p' kernel/common/build.config.common kernel/common/build.config.constants 2>/dev/null | head -1)
+          test "$kmi" = 11 || { echo "WILDKERNELS SOURCE INCOMPATIBLE with aurora stock android14-11: source KMI=$kmi. STOP, do not fake KMI." >&2; exit 1; }
+          echo "KERNEL_SOURCE_COMMIT=$actual" >> "$GITHUB_ENV"
+          printf 'WildKernels r22: source common-android14-6.1-2025-06; HEAD %s; KMI android14-%s\n' "$actual" "$kmi" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Integrate pinned KernelSU Next SUSFS fork into GKI
+        uses: ./.github/actions/root-setup
+        with:
+          flavor: next
+          next_susfs_fork: 'true'
+          commit: 39b15dead6fa806cb3582f866b081fa1d9e1c9e4
+
+      - name: Verify KSU Next integrated SUSFS and UAPI 6 source
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C kernel/KernelSU-Next rev-parse HEAD)" = 39b15dead6fa806cb3582f866b081fa1d9e1c9e4
+          grep -q 'KERNEL_SU_UAPI_VERSION = 6;' kernel/KernelSU-Next/uapi/supercall.h
+          grep -q '^config KSU_SUSFS$' kernel/KernelSU-Next/kernel/Kconfig
+
+      - name: Pin SUSFS 2.4.0 dev commit used in previous compiled candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          git init susfs4ksu
+          git -C susfs4ksu remote add origin https://gitlab.com/pershoot/susfs4ksu.git
+          git -C susfs4ksu fetch --depth=1 origin d791ce68f38f067f6489c0c8866e145a903b62e6
+          git -C susfs4ksu checkout --detach FETCH_HEAD
+          actual="$(git -C susfs4ksu rev-parse HEAD)"
+          test "$actual" = d791ce68f38f067f6489c0c8866e145a903b62e6
+          test -s susfs4ksu/kernel_patches/50_add_susfs_in_gki-android14-6.1.patch
+          echo "SUSFS_COMMIT=$actual" >> "$GITHUB_ENV"
+          echo "Resolved SUSFS branch at $actual" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Enable SUSFS kernel configuration
+        uses: ./.github/actions/susfs-config
+
+      - name: Apply pinned SUSFS kernel patches
+        uses: ./.github/actions/susfs-patches
+        with:
+          version: android14-6.1
+          sublevel: '138'
+          os_patch_level: 2025-06
+          aurora_namespace_header_rebase: 'true'
+
+      - name: Revert temporary SUSFS patch scaffolding
+        uses: ./.github/actions/susfs-revert-patches
+        with:
+          version: android14-6.1
+          sublevel: '138'
+          os_patch_level: 2025-06
+
+      - name: Integrate pinned NoMount VFS
+        uses: ./.github/actions/nomount
+        with:
+          commit: 48e4b79a357d77f787b0db8167dbb1f5570ded17
+          kernel_version: '6.1'
+
+      - name: Check integration rejects and linkage
+        shell: bash
+        run: |
+          set -euo pipefail
+          git -C kernel/common diff --check
+          if find kernel/common -name '*.rej' -type f | grep -q .; then
+            echo "Found kernel patch rejects" >&2
+            exit 1
+          fi
+          test -L kernel/common/fs/nomount
+          grep -q '^config KSU_SUSFS$' kernel/common/drivers/kernelsu/Kconfig
+
+      - name: Configure full 4K built-in GKI
+        uses: ./.github/actions/set-kernel-config
+        with:
+          config_list: |
+            CONFIG_KPROBES=y
+            CONFIG_EXT4_FS=y
+            CONFIG_KSU=y
+            CONFIG_OVERLAY_FS=y
+            CONFIG_TMPFS_XATTR=y
+            CONFIG_TMPFS_POSIX_ACL=y
+            CONFIG_ARM64_4K_PAGES=y
+            CONFIG_MODULES=y
+            CONFIG_MODULE_UNLOAD=y
+            CONFIG_SMP=y
+            CONFIG_PREEMPT=y
+            CONFIG_MODVERSIONS=y
+            CONFIG_MODULE_SIG=y
+            CONFIG_MODULE_SIG_PROTECT=y
+            CONFIG_MODULE_SIG_ALL=y
+            CONFIG_MODULE_SIG_SHA1=y
+            CONFIG_TRIM_UNUSED_KSYMS=y
+            CONFIG_CFI_CLANG=y
+            CONFIG_SHADOW_CALL_STACK=y
+            CONFIG_KASAN=y
+            CONFIG_KASAN_HW_TAGS=y
+            CONFIG_LTO_NONE=y
+            CONFIG_DEBUG_INFO_BTF=y
+            CONFIG_DEBUG_INFO_BTF_MODULES=y
+            CONFIG_ANDROID_VENDOR_HOOKS=y
+            CONFIG_ANDROID_KABI_RESERVE=y
+            CONFIG_KSU_SUSFS=y
+            CONFIG_KSU_SUSFS_PRIORITY_UID_FILTER=y
+            CONFIG_NOMOUNT=y
+            CONFIG_KALLSYMS=y
+            CONFIG_KALLSYMS_ALL=y
+
+      - name: Build FULL kernel Image using WildKernels r22 Kleaf fast profile
+        uses: ./.github/actions/build-kernel
+        with:
+          version: android14-6.1
+          page_size: 4k
+          release_mode: 'false'
+          lto_mode: 'default'
+
+      - name: Fail closed unless output has exact KMI and built-in root
+        shell: bash
+        run: |
+          set -euo pipefail
+          image=AnyKernel3/Image
+          test -s "$image"
+          version=$(strings "$image" | grep -m1 -o 'Linux version 6\.1\.138-android14-11[^[:space:]]*' || true)
+          test -n "$version" || { echo "Kernel does not report 6.1.138-android14-11" >&2; exit 1; }
+          config=""
+          for f in /home/runner/out/.config kernel/bazel-bin/common/kernel_aarch64_config/out_dir/.config; do
+            if [ -f "$f" ]; then config="$f"; break; fi
+          done
+          test -n "$config" || { echo "Cannot verify built-in KSU config" >&2; exit 1; }
+          grep -qx CONFIG_KSU=y "$config"
+          grep -qx CONFIG_KPROBES=y "$config"
+          grep -qx CONFIG_ARM64_4K_PAGES=y "$config"
+          for feature in CONFIG_KSU_SUSFS=y CONFIG_NOMOUNT=y CONFIG_KSU_SUSFS_PRIORITY_UID_FILTER=y CONFIG_KALLSYMS=y CONFIG_KALLSYMS_ALL=y; do
+            grep -qx "$feature" "$config" || { echo "Missing feature: $feature" >&2; exit 1; }
+          done
+          # Device stock /proc/config.gz reports these module ABI/security options.
+          # Reject a release candidate that diverges; flags alone do not prove ABI compatibility.
+          for required in \
+            CONFIG_MODULES=y \
+            CONFIG_MODULE_UNLOAD=y \
+            CONFIG_SMP=y \
+            CONFIG_PREEMPT=y \
+            CONFIG_MODVERSIONS=y \
+            CONFIG_MODULE_SIG=y \
+            CONFIG_MODULE_SIG_PROTECT=y \
+            CONFIG_MODULE_SIG_ALL=y \
+            CONFIG_MODULE_SIG_SHA1=y \
+            CONFIG_TRIM_UNUSED_KSYMS=y \
+            CONFIG_CFI_CLANG=y \
+            CONFIG_SHADOW_CALL_STACK=y \
+            CONFIG_KASAN=y \
+            CONFIG_KASAN_HW_TAGS=y \
+            CONFIG_LTO_NONE=y \
+            CONFIG_DEBUG_INFO_BTF=y \
+            CONFIG_DEBUG_INFO_BTF_MODULES=y \
+            CONFIG_ANDROID_VENDOR_HOOKS=y \
+            CONFIG_ANDROID_KABI_RESERVE=y; do
+            grep -qx "$required" "$config" || { echo "Required stock kernel option absent: $required" >&2; exit 1; }
+          done
+          grep -qx '# CONFIG_MODULE_SIG_FORCE is not set' "$config" || { echo "Stock uses non-forced module signatures" >&2; exit 1; }
+          cp "$config" AnyKernel3/GKI-CONFIG.txt
+          printf '%s\n' "Kleaf: WildKernels r22 reference --config=fast (default LTO)" "Kernel source: $KERNEL_SOURCE_COMMIT (WildKernels r22 common-android14-6.1-2025-06)" "KernelSU Next: $ROOT_COMMIT (pershoot SUSFS UAPI 6)" "SUSFS patchset: $SUSFS_COMMIT" "NoMount: $NOMOUNT_COMMIT" "Target: OS3.0.305.0.WNAMIXM" "Vendor ABI CRC check: required before flash" "KernelSU Manager must support UAPI 6; installed 3.4.2 Manager is UAPI 5" > AnyKernel3/BUILD-INFO.txt
+          symvers=$(find -L kernel/bazel-bin/common -type f -name Module.symvers -print -quit 2>/dev/null || true)
+          if [ -n "$symvers" ]; then cp "$symvers" AnyKernel3/Module.symvers; fi
+          sha256sum "$image" | tee AnyKernel3/IMAGE-SHA256.txt
+          {
+            echo "## Aurora OS3.0.305.0 experimental GKI"
+            echo "- Device: Xiaomi 14 Ultra aurora, currently active slot A"
+            echo "- Firmware: OS3.0.305.0.WNAMIXM"
+            echo "- Kernel: $version"
+            echo "- Base source: $KERNEL_SOURCE_COMMIT"
+            echo "- KernelSU Next: $ROOT_COMMIT (pershoot, UAPI 6)"
+            echo "- SUSFS: $SUSFS_COMMIT"
+            echo "- NoMount: $NOMOUNT_COMMIT"
+            echo "- Matching UAPI 6 Manager required (3.4.2 Manager is UAPI 5)"
+            echo "- Build success does NOT prove boot compatibility; previous test bootlooped"
+            echo "- Stock requires module ABI/CRC; compare against vendor modules before any new test"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload experimental artifact for review only
+        uses: actions/upload-artifact@v4
+        with:
+          name: AURORA-305-WILDR22-FULL-KSUNext-SUSFS-NoMount-EXPERIMENTAL
+          path: |
+            AnyKernel3/Image
+            AnyKernel3/IMAGE-SHA256.txt
+            AnyKernel3/GKI-CONFIG.txt
+            AnyKernel3/BUILD-INFO.txt
+            AnyKernel3/Module.symvers
+          if-no-files-found: error
+          retention-days: 14

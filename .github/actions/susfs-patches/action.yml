@@ -10,6 +10,10 @@ inputs:
   os_patch_level:
     description: 'OS patch level (e.g., 2024-07)'
     required: true
+  aurora_namespace_header_rebase:
+    description: 'Rebase SUSFS namespace.c header-only hunk against Aurora 6.1.138'
+    required: false
+    default: 'false'
 
 runs:
   using: "composite"
@@ -151,6 +155,15 @@ runs:
           echo "Applying task_mmu.c show_smaps_rollup reshape for 6.12 sublevel 92+"
           python3 "${{ github.workspace }}/.github/scripts/susfs_fake_612.py" fs/proc/task_mmu.c apply
         fi
+
+    - name: Rebase SUSFS namespace header for Aurora ACK
+      if: inputs.aurora_namespace_header_rebase == 'true' && inputs.version == 'android14-6.1' && inputs.sublevel == '138'
+      shell: bash
+      working-directory: ${{ github.workspace }}/kernel/common
+      run: |
+        set -euo pipefail
+        python3 "${{ github.workspace }}/tools/rebase_susfs_namespace_header.py" \
+          50_add_susfs_in_gki-android14-6.1.patch fs/namespace.c
 
     - name: Apply Kernel SUSFS Patches
       shell: bash
